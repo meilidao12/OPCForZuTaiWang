@@ -36,6 +36,8 @@ namespace OPCApplication
         CharacterConversion characterConversion;
         List<OpcListModel> models;
         string ServerIP = "127.0.0.1";
+        OPCServer opcServer;
+        bool blConnectOPC = false;
         public MainWindow()
         {
             InitializeComponent();
@@ -61,22 +63,25 @@ namespace OPCApplication
         {
             try
             {
-                ModbusTcpServer modbusTcpServer = new ModbusTcpServer();
-                modbusTcpServer.AffairID = Message.Substring(0, 4);
-                modbusTcpServer.ProtocolID = Message.Substring(4, 4);
-                int requestDataLength = MathHelper.HexToDec(Message.Substring(Message.Length - 4, 4)); //请求数据长度
-                modbusTcpServer.BackDataLength = MathHelper.DecToHex((requestDataLength * 2).ToString()).PadLeft(2, '0');
-                modbusTcpServer.SlaveId = Message.Substring(12, 2);
-                modbusTcpServer.Length = MathHelper.DecToHex((3 + requestDataLength * 2).ToString()).PadLeft(4, '0');
-                string backdata = modbusTcpServer.AffairID + modbusTcpServer.ProtocolID + modbusTcpServer.Length + modbusTcpServer.SlaveId + ModbusFunction.ReadHoldingRegisters + modbusTcpServer.BackDataLength;
-                if (models.Count < requestDataLength/2) return;
-                for (int i = 0; i < requestDataLength/2; i++)
+                if(this.opcServer.ServerState == (int)OPCServerState.OPCRunning)
                 {
-                    string a = MathHelper.SingleToHex(models[i].Value);
-                    backdata += a.Substring(4, 4) + a.Substring(0, 4);
+                    ModbusTcpServer modbusTcpServer = new ModbusTcpServer();
+                    modbusTcpServer.AffairID = Message.Substring(0, 4);
+                    modbusTcpServer.ProtocolID = Message.Substring(4, 4);
+                    int requestDataLength = MathHelper.HexToDec(Message.Substring(Message.Length - 4, 4)); //请求数据长度
+                    modbusTcpServer.BackDataLength = MathHelper.DecToHex((requestDataLength * 2).ToString()).PadLeft(2, '0');
+                    modbusTcpServer.SlaveId = Message.Substring(12, 2);
+                    modbusTcpServer.Length = MathHelper.DecToHex((3 + requestDataLength * 2).ToString()).PadLeft(4, '0');
+                    string backdata = modbusTcpServer.AffairID + modbusTcpServer.ProtocolID + modbusTcpServer.Length + modbusTcpServer.SlaveId + ModbusFunction.ReadHoldingRegisters + modbusTcpServer.BackDataLength;
+                    if (models.Count < requestDataLength / 2) return;
+                    for (int i = 0; i < requestDataLength / 2; i++)
+                    {
+                        string a = MathHelper.SingleToHex(models[i].Value);
+                        backdata += a.Substring(4, 4) + a.Substring(0, 4);
+                    }
+                    characterConversion = new CharacterConversion();
+                    this.SocketServer.Send(socket, characterConversion.HexConvertToByte(backdata));
                 }
-                characterConversion = new CharacterConversion();
-                this.SocketServer.Send(socket, characterConversion.HexConvertToByte(backdata));
             }
             catch(Exception ex)
             {
@@ -93,8 +98,8 @@ namespace OPCApplication
             //KingView.View.1
             List<string> names = new List<string>();
             OPCClient.DataChangeEvent += OPCClient_DataChangeEvent;
-            //names = OPCClient.GetOPCServerNames(ServerIP);
-            OPCServer opcServer = OPCClient.ConnectToServer("Kepware.KEPServerEX.V5", ServerIP);
+            names = OPCClient.GetOPCServerNames(ServerIP);
+            opcServer = OPCClient.ConnectToServer(names[0], ServerIP);
             OPCBrowser opcbrowser = OPCClient.RecurBrowse(opcServer);
             foreach (var item in opcbrowser)
             {
@@ -108,14 +113,12 @@ namespace OPCApplication
         /// </summary>
         private void AddOpcTags()
         {
-            // models = access.GetDataTable<OpcListModel>("Select * from [OPCConfig] order by Id asc");
-            //foreach(var item in models)
-            //{
-            //    this.lstAddedTags.Items.Add(item.Name);
-            //    //OPCClient.AddItem(item.Name);
-            //    OPCClient.AddItem("Ramp1");
-            //}
-            OPCClient.AddItem("Simulation Examples.Functions.Ramp1");
+            models = access.GetDataTable<OpcListModel>("Select * from [OPCConfig] order by Id asc");
+            foreach (var item in models)
+            {
+                this.lstAddedTags.Items.Add(item.Name);
+                OPCClient.AddItem(item.Name);
+            }
         }
 
         private void OPCClient_DataChangeEvent(List<OPCDataItem> OpcDataItems)
@@ -151,7 +154,7 @@ namespace OPCApplication
         private void btnAddressSerial_Click(object sender, RoutedEventArgs e)
         {
             models = access.GetDataTable<OpcListModel>("Select * from [OPCConfig] order by Id asc");
-            int addr = 40001;
+            int addr = 0;
             foreach (var item in models)
             {
                 string commandtext = string.Format("UPDATE [OPCConfig] SET [Address]={0} WHERE Name='{1}'", addr.ToString(), item.Name);

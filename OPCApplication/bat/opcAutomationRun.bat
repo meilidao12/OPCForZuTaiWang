@@ -1,0 +1,1 @@
+regsvr32 "D:\³ÌÐò\OPCForZuTaiWang\OPCApplication\bat\Interop.OPCAutomation.dll"

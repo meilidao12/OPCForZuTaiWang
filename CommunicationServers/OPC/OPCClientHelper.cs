@@ -38,7 +38,6 @@ namespace CommunicationServers.OPC
             foreach (string item in (Array)serverList)
             {
                 lst.Add(item);
-                Console.WriteLine(item);
             }
             return lst;
         }
