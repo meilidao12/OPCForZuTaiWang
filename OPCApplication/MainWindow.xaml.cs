@@ -20,6 +20,8 @@ using System.Data;
 using OPCApplication.Models;
 using CommunicationServers.Sockets;
 using ProtocolFamily.Modbus;
+using System.Windows.Threading;
+using System.Threading;
 
 namespace OPCApplication
 {
@@ -30,7 +32,7 @@ namespace OPCApplication
     {
         SqlHelper sql = new SqlHelper();
         AccessHelper access = new AccessHelper();
-        OPCClientHelper OPCClient = new OPCClientHelper();
+        OPCClientHelper OPCClient;
         SocketServer SocketServer = new SocketServer();
         IniHelper ini = new IniHelper(System.AppDomain.CurrentDomain.BaseDirectory + @"\Set.ini");
         CharacterConversion characterConversion;
@@ -38,6 +40,9 @@ namespace OPCApplication
         string ServerIP = "127.0.0.1";
         OPCServer opcServer;
         bool blConnectOPC = false;
+        DispatcherTimer ReConnectToOpcTimer = new DispatcherTimer();
+        public delegate void MethodInvoker(List<OPCDataItem> OpcDataItems);
+        bool Restart = false;
         public MainWindow()
         {
             InitializeComponent();
@@ -46,9 +51,32 @@ namespace OPCApplication
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
+            ReConnectToOpcTimer.Interval = TimeSpan.FromSeconds(60);
+            ReConnectToOpcTimer.Tick += ReConnectToOpcTimer_Tick;
+            ReConnectToOpcTimer.Start();
             IniOpc();
             AddOpcTags();
             iniSocket();
+            this.WindowState = WindowState.Minimized;
+        }
+
+        private void ReConnectToOpcTimer_Tick(object sender, EventArgs e)
+        {
+            try
+            {
+                if(Restart)
+                {
+                    Application.Current.Shutdown();
+                }
+                else
+                {
+                    Restart = true;
+                }
+            }
+            catch(Exception ex)
+            {
+                SimpleLogHelper.Instance.WriteLog(LogType.Error, ex);
+            }
         }
 
         private void  iniSocket()
@@ -82,9 +110,20 @@ namespace OPCApplication
                     characterConversion = new CharacterConversion();
                     this.SocketServer.Send(socket, characterConversion.HexConvertToByte(backdata));
                 }
+                else
+                {
+                    if(ReConnectToOpcTimer.IsEnabled == false)
+                    {
+                        ReConnectToOpcTimer.Start();
+                    }
+                }
             }
             catch(Exception ex)
             {
+                if (ReConnectToOpcTimer.IsEnabled == false)
+                {
+                    ReConnectToOpcTimer.Start();
+                }
                 SimpleLogHelper.Instance.WriteLog(LogType.Error, ex);
             }
         }
@@ -96,10 +135,13 @@ namespace OPCApplication
         {
             //Kepware.KEPServerEX.V5
             //KingView.View.1
+            string name = "KingView.View.1";
+            OPCClient = new OPCClientHelper();
             List<string> names = new List<string>();
             OPCClient.DataChangeEvent += OPCClient_DataChangeEvent;
-            names = OPCClient.GetOPCServerNames(ServerIP);
-            opcServer = OPCClient.ConnectToServer(names[0], ServerIP);
+            //names = OPCClient.GetOPCServerNames(ServerIP);
+            //opcServer = OPCClient.ConnectToServer(names[0], ServerIP);
+            opcServer = OPCClient.ConnectToServer(name, ServerIP);
             OPCBrowser opcbrowser = OPCClient.RecurBrowse(opcServer);
             foreach (var item in opcbrowser)
             {
@@ -116,38 +158,63 @@ namespace OPCApplication
             models = access.GetDataTable<OpcListModel>("Select * from [OPCConfig] order by Id asc");
             foreach (var item in models)
             {
-                this.lstAddedTags.Items.Add(item.Name);
                 OPCClient.AddItem(item.Name);
+                this.lstAddedTags.Items.Add(item.Name);
             }
         }
 
-        private void OPCClient_DataChangeEvent(List<OPCDataItem> OpcDataItems)
+        private  void OPCClient_DataChangeEvent(List<OPCDataItem> OpcDataItems)
         {
-            foreach(var item in OpcDataItems)
+            try
             {
-                if (item.ItemValue != null)
+                Restart = false;
+                foreach (var item in OpcDataItems)
                 {
-                    int index = models.FindIndex(m => m.Name == item.ItemName.ToString());
-                    if (index != -1)
+                    if (item.ItemValue != null)
                     {
-                        models[index].Value = Convert.ToSingle(item.ItemValue).ToString();
+                        //右侧显示被选中opc的值
+                        if (!string.IsNullOrEmpty(this.opcInfo.Opcname))
+                        {
+                            if (item.ItemName.ToString() == this.opcInfo.Opcname)
+                            {
+                                this.opcInfo.OpcValue = Convert.ToSingle(item.ItemValue).ToString();
+                            }
+                        }
+
+                        int index = models.FindIndex(m => m.Name == item.ItemName.ToString());
+                        if (index != -1)
+                        {
+                            if (item.ItemValue != null)
+                            {
+                                models[index].Value = Convert.ToSingle(item.ItemValue).ToString();
+                            }
+                        }
+                        //string commandtext = string.Format("UPDATE [OPCConfig] SET [Value]={0} WHERE Name='{1}'", Convert.ToSingle(item.ItemValue).ToString(), item.ItemName);
+                        //access.Execute(commandtext);
                     }
-                    string commandtext = string.Format("UPDATE [OPCConfig] SET [Value]={0} WHERE Name='{1}'", Convert.ToSingle(item.ItemValue).ToString(), item.ItemName);
-                    access.Execute(commandtext);
                 }
             }
+            catch (Exception ex)
+            {
+
+            }
         }
-
-
 
         private void lstTags_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
-            string selectedText = (sender as ListBox).SelectedItem.ToString();
-            string commandtext = string.Format("INSERT INTO [OPCConfig] (Name) values ('{0}')", selectedText);
-            if (access.Execute(commandtext))
+            try
             {
-                this.lstAddedTags.Items.Add(selectedText);
-                OPCClient.AddItem(selectedText);
+                string selectedText = (sender as ListBox).SelectedItem.ToString();
+                string commandtext = string.Format("INSERT INTO [OPCConfig] (Name) values ('{0}')", selectedText);
+                if (access.Execute(commandtext))
+                {
+                    this.lstAddedTags.Items.Add(selectedText);
+                    OPCClient.AddItem(selectedText);
+                }
+            }
+            catch
+            {
+
             }
         }
 
@@ -173,9 +240,36 @@ namespace OPCApplication
 
         private void lstAddedTags_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            string selectedText = (sender as ListBox).SelectedItem.ToString();
-            this.opcInfo.Opcname = selectedText;
-            this.opcInfo.Refresh();
+            if((sender as ListBox).SelectedItem != null)
+            {
+                string selectedText = (sender as ListBox).SelectedItem.ToString();
+                this.opcInfo.Opcname = selectedText;
+                this.opcInfo.Refresh();
+            }
+        }
+
+        private void Delete_Click(object sender, RoutedEventArgs e)
+        {
+            string name = this.lstAddedTags.SelectedItem.ToString();
+            this.lstAddedTags.Items.Remove(this.lstAddedTags.SelectedItem);
+            string commandtext = string.Format("Delete from [OPCConfig] WHERE [Name]='{0}'", name);
+            Console.WriteLine(access.Execute(commandtext));
+        }
+
+        private void CheckOpc_Click(object sender, RoutedEventArgs e)
+        {
+            if(this.CheckOpc.IsChecked == true)
+            {
+                if(!ReConnectToOpcTimer.IsEnabled)
+                {
+                    ReConnectToOpcTimer.Start();
+                    this.CheckOpc.IsChecked = false;
+                }
+            }
+            else
+            {
+                ReConnectToOpcTimer.Stop();
+            }
         }
     }
 }

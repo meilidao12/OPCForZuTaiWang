@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text;
 using OPCAutomation;
 using Services;
+using System.Threading;
+
 namespace CommunicationServers.OPC
 {
     public delegate void DelegateDataChange(List<OPCDataItem> OpcDataItems);
@@ -200,7 +202,9 @@ namespace CommunicationServers.OPC
                     OpcDataItems[index].TimeStamp = TimeStamps.GetValue(i);
                 }
             }
+            if (DataChangeEvent == null) return;
             DataChangeEvent(OpcDataItems);
+            
         }
     }
 
